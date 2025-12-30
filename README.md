@@ -57,28 +57,25 @@ python Fruit_Game.py
 Plaintext
 
 Fruit-Catch-AI/
-├── Fruit_Game.py           # Mã nguồn chính của trò chơi (Lưu ý tên file)
-├── highscores.txt          # Tệp lưu trữ Top 5 điểm cao
-├── [Hình ảnh nhân vật & Vật phẩm]
-│   ├── basket.png          # Rổ hứng trái cây
-│   ├── dautay.png          # Trái dâu tây
-│   ├── cachua.png          # Trái cà chua
-│   ├── chuoi.png           # Trái chuối
-│   ├── duahau.png          # Trái dưa hấu
-│   ├── khe.png             # Trái khế
-│   ├── apple.png           # Trái táo
-│   ├── bomb.png            # Quả bom (vật cản)
-│   ├── powerup.png         # Vật phẩm hỗ trợ (Slow Motion)
-│   └── heart.png           # Biểu tượng mạng sống (Life)
-├── [Hình ảnh màn chơi đặc biệt]
-│   ├── alien.png           # Quái vật Alien (Màn 4)
-│   ├── alien_charge.png    # Alien trong trạng thái tụ chiêu
-│   └── fireball.png        # Cầu lửa Alien bắn ra
-└── [Hình ảnh môi trường]
-    ├── background.png      # Nền màn 1 (Safe Area)
-    ├── background_dark.png # Nền màn 2 (Opportunity & Dangerous)
-    ├── background_extreme.png # Nền màn 3 (Foggy Area)
-    └── background_ultimate.png # Nền màn 4 (Alien Fire Zone)
+├── Fruit_Game.py           # Mã nguồn chính của trò chơi
+├── highscores.txt          # Tệp lưu trữ Top 5 điểm cao (tự động tạo)
+├── basket.png              # Rổ hứng trái cây
+├── dautay.png              # Trái dâu tây
+├── cachua.png              # Trái cà chua
+├── chuoi.png               # Trái chuối
+├── duahau.png              # Trái dưa hấu
+├── khe.png                 # Trái khế
+├── apple.png               # Trái táo
+├── bomb.png                # Quả bom (vật cản)
+├── powerup.png             # Vật phẩm hỗ trợ (Slow Motion)
+├── heart.png               # Biểu tượng mạng sống (Life)
+├── alien.png               # Quái vật Alien (Màn 4)
+├── alien_charge.png        # Alien trong trạng thái tụ chiêu
+├── fireball.png            # Cầu lửa Alien bắn ra
+├── background.png          # Nền màn 1 (Safe Area)
+├── background_dark.png     # Nền màn 2 (Opportunity & Dangerous)
+├── background_extreme.png  # Nền màn 3 (Foggy Area)
+└── background_ultimate.png # Nền màn 4 (Alien Fire Zone)
 👥 Tác giả
 Dự án được phát triển với niềm đam mê công nghệ bởi:
 

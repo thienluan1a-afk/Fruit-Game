@@ -1,0 +1,757 @@
+import cv2
+import mediapipe as mp
+import pygame
+import random
+import sys
+import numpy as np
+import os 
+
+# --- 1. THIẾT LẬP PYGAME & FONTS MỚI ---
+pygame.init()
+SCREEN_WIDTH = 583
+SCREEN_HEIGHT = 700
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption("Game Hung Trai Cay Bang Mui")
+clock = pygame.time.Clock()
+
+# --- Màu sắc (Color Palette) ---
+COLOR_PRIMARY = (255, 175, 50) # Vàng cam đậm (POINT)
+COLOR_ACCENT = (0, 255, 255) # Xanh Cyan (PowerUp/Tips/Webcam Border)
+COLOR_TEXT_MAIN = (255, 255, 255) # Trắng
+COLOR_TEXT_SHADOW = (0, 0, 0) # Đen (cho Shadow)
+COLOR_LIFE = (255, 50, 50) # Đỏ tươi (LIFE)
+COLOR_LEVEL = (100, 200, 255) # Xanh dương nhạt (LEVEL)
+COLOR_OVERLAY = (50, 50, 50, 150) # Màu xám trong suốt
+
+# Tải Font Chữ: Đảm bảo font được tải đúng cách.
+FONT_DEFAULT = pygame.font.match_font('impact') or pygame.font.match_font('arial') or None
+# Line ~32 (HOẶC BÊN DƯỚI FONT_DEFAULT)
+# --- Hàm Hỗ trợ Tải File (RẤT QUAN TRỌNG) ---
+def resource_path(relative_path):
+    """Lấy đường dẫn tuyệt đối cho tài nguyên, hoạt động cho dev và PyInstaller"""
+    try:
+        # PyInstaller tạo thư mục tạm thời và lưu đường dẫn vào _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        # Đường dẫn gốc khi chạy trong môi trường dev bình thường
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+# Fonts
+font_small = pygame.font.Font(FONT_DEFAULT, 28)
+font_medium = pygame.font.Font(FONT_DEFAULT, 36)
+font_large = pygame.font.Font(FONT_DEFAULT, 72)
+
+# Kích thước Rổ và Trái cây
+BASKET_WIDTH = 120
+BASKET_HEIGHT = 60
+basket_y = SCREEN_HEIGHT - 70 
+FRUIT_SIZE = 40 
+
+# Kích thước khung webcam hiển thị trên Pygame
+WEBCAM_DISPLAY_W = SCREEN_WIDTH // 4 # Chiều rộng của webcam khi hiển thị
+WEBCAM_DISPLAY_H = SCREEN_HEIGHT // 4 # Chiều cao của webcam khi hiển thị
+
+# Vị trí UI
+UI_MARGIN_X = 15
+LINE_SPACING = 30 
+LEVEL_TEXT_X = UI_MARGIN_X 
+LEVEL_TEXT_Y = 10 
+POINT_TEXT_X = UI_MARGIN_X 
+POINT_TEXT_Y = LEVEL_TEXT_Y + 40
+LIFE_TEXT_X = UI_MARGIN_X 
+LIFE_TEXT_Y = POINT_TEXT_Y + LINE_SPACING
+WEBCAM_POS_X = SCREEN_WIDTH - WEBCAM_DISPLAY_W - 10 
+WEBCAM_POS_Y = 10
+WEBCAM_POS = (WEBCAM_POS_X, WEBCAM_POS_Y)
+WEBCAM_BORDER_RADIUS = 15
+WEBCAM_BORDER_THICKNESS = 5 
+
+# --- CẤU HÌNH CÁC MÀN CHƠI (STAGE_CONFIGS HOÀN CHỈNH) ---
+STAGE_CONFIGS = {
+    1: {
+        'threshold': 40, 'speed_start': 2.7, 'spawn_delay_start': 800,
+        'background_file': 'background.png', 'bomb_chance': 0.0,
+        'powerup_chance': 0.0, 'bomb_penalty': 0, 'is_foggy': False,
+        'name': 'SAFE AREA',
+        'tips': 'LEVEL 2: OPPOTUNITY AND DANGEROUS!|BOMB (-5 POINT & 1 LIFE) RANDOM 15%.|POWER-UP (DISINCREASE SPEED) RANDOM 5%.', 
+    },
+    2: {
+        'threshold': 70, 'speed_start': 3.5, 'spawn_delay_start': 650,
+        'background_file': 'background_dark.png', 'bomb_chance': 0.15,
+        'powerup_chance': 0.05, 'bomb_penalty': 5, 'is_foggy': False,
+        'name': 'OPPOTUNITY AND DANGEROUS!',
+        'tips': 'LEVEL 3: FOGGY AREA!| HIGHT SPEED  + DISINCREASE VISION.', 
+    },
+    3: {
+        'threshold': 100, 'speed_start': 3.0, 'spawn_delay_start': 550, # Sửa: Chuyển sang Màn 4 ở điểm 90
+        'background_file': 'background_extreme.png', 'bomb_chance': 0.10,
+        'powerup_chance': 0.05, 'bomb_penalty': 10, 'is_foggy': True,
+        'name': 'FOGGY AREA',
+        'tips': 'LEVEL 4: ALIEN FIRE ZONE!| DODGE THE FIREBALLS TO SURVIVE. FIREBALL (-1 POINT).',
+    },
+    4: { # THÊM MÀN 4: ALIEN FIRE ZONE
+        'threshold': float('inf'), # Màn cuối
+        'speed_start': 5.0, 
+        'spawn_delay_start': 500, 
+        'background_file': 'background_ultimate.png', # File bạn cần thêm
+        'bomb_chance': 0.0, 
+        'powerup_chance': 0.0,
+        'bomb_penalty': 0, 
+        'is_foggy': False,
+        'name': 'ALIEN FIRE ZONE',
+        'tips': 'FINAL CHALLENGE: AVOID THE ALIEN FIRE!',
+    },
+}
+
+# --- Tải & Xử lý Hình ảnh ---
+# --- Tải & Xử lý Hình ảnh ---
+basket_img = None
+fruit_images = []
+bomb_img = None
+powerup_img = None
+alien_img = None       
+alien_charge_img = None 
+fireball_img = None    
+heart_img = None # Thêm Heart
+BACKGROUND_IMAGES = {}
+
+try:
+    # 1. Tải Rổ và Background (Sử dụng resource_path)
+    basket_img = pygame.image.load(resource_path('basket.png')).convert_alpha()
+    basket_img = pygame.transform.scale(basket_img, (BASKET_WIDTH, BASKET_HEIGHT))
+
+    for i in range(1, len(STAGE_CONFIGS) + 1):
+        filename = STAGE_CONFIGS[i]['background_file']
+        temp_bg = pygame.image.load(resource_path(filename)).convert() 
+        BACKGROUND_IMAGES[i] = pygame.transform.scale(temp_bg, (SCREEN_WIDTH, SCREEN_HEIGHT))
+        
+    # 2. Tải Trái cây, Bom, và Power-up
+    fruit_filenames = ['dautay.png', 'cachua.png', 'chuoi.png', 'duahau.png', 'khe.png', 'apple.png'] 
+    for filename in fruit_filenames:
+        img = pygame.image.load(resource_path(filename)).convert_alpha()
+        img = pygame.transform.scale(img, (FRUIT_SIZE, FRUIT_SIZE))
+        fruit_images.append(img)
+        
+    bomb_img = pygame.image.load(resource_path('bomb.png')).convert_alpha()
+    bomb_img = pygame.transform.scale(bomb_img, (FRUIT_SIZE, FRUIT_SIZE))
+    
+    powerup_img = pygame.image.load(resource_path('powerup.png')).convert_alpha()
+    powerup_img = pygame.transform.scale(powerup_img, (FRUIT_SIZE, FRUIT_SIZE))
+
+    # 3. Tải Alien và Fireball
+    alien_img = pygame.image.load(resource_path('alien.png')).convert_alpha()
+    # Kích thước Alien: 4x Fruit Size
+    alien_img = pygame.transform.scale(alien_img, (FRUIT_SIZE * 4, FRUIT_SIZE * 4))
+    
+    alien_charge_img = pygame.image.load(resource_path('alien_charge.png')).convert_alpha()
+    alien_charge_img = pygame.transform.scale(alien_charge_img, (FRUIT_SIZE * 4, FRUIT_SIZE * 4)) 
+    
+    fireball_img = pygame.image.load(resource_path('fireball.png')).convert_alpha()
+    # Kích thước Fireball: 2.5x Fruit Size
+    fireball_img = pygame.transform.scale(fireball_img, (int(FRUIT_SIZE * 2.5), int(FRUIT_SIZE * 2.5)))
+
+    # 4. Tải Heart
+    heart_img = pygame.image.load(resource_path('heart.png')).convert_alpha()
+    heart_img = pygame.transform.scale(heart_img, (FRUIT_SIZE, FRUIT_SIZE))
+
+except pygame.error as e:
+    print(f"Lỗi tải hình ảnh: {e}. Sử dụng hình vẽ/màu mặc định.")
+    
+    # Fallback cho các tài nguyên (Giữ nguyên logic Fallback)
+    if basket_img is None: basket_img = pygame.Surface((BASKET_WIDTH, BASKET_HEIGHT)); basket_img.fill((0, 255, 0))
+    
+    # Fallback Backgrounds
+    if 1 not in BACKGROUND_IMAGES: BACKGROUND_IMAGES[1] = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)); BACKGROUND_IMAGES[1].fill((0, 50, 0)) 
+    if 2 not in BACKGROUND_IMAGES: BACKGROUND_IMAGES[2] = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)); BACKGROUND_IMAGES[2].fill((50, 0, 0))
+    if 3 not in BACKGROUND_IMAGES: BACKGROUND_IMAGES[3] = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)); BACKGROUND_IMAGES[3].init((100, 100, 0))
+    if 4 not in BACKGROUND_IMAGES: BACKGROUND_IMAGES[4] = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)); BACKGROUND_IMAGES[4].fill((150, 0, 150))
+
+    # Fallback Items
+    if not fruit_images: 
+        default_img = pygame.Surface((FRUIT_SIZE, FRUIT_SIZE), pygame.SRCALPHA)
+        pygame.draw.circle(default_img, COLOR_LIFE, (FRUIT_SIZE // 2, FRUIT_SIZE // 2), FRUIT_SIZE // 2)
+        fruit_images.append(default_img)
+    if bomb_img is None:
+        bomb_img = pygame.Surface((FRUIT_SIZE, FRUIT_SIZE), pygame.SRCALPHA)
+        pygame.draw.circle(bomb_img, COLOR_TEXT_SHADOW, (FRUIT_SIZE // 2, FRUIT_SIZE // 2), FRUIT_SIZE // 2)
+    if powerup_img is None:
+        powerup_img = pygame.Surface((FRUIT_SIZE, FRUIT_SIZE), pygame.SRCALPHA)
+        pygame.draw.rect(powerup_img, COLOR_ACCENT, powerup_img.get_rect()) 
+    
+    # Fallback Alien/Fireball
+    if alien_img is None:
+        alien_img = pygame.Surface((FRUIT_SIZE * 4, FRUIT_SIZE * 4), pygame.SRCALPHA)
+        pygame.draw.rect(alien_img, (0, 0, 255), alien_img.get_rect()) 
+    if alien_charge_img is None:
+        alien_charge_img = pygame.Surface((FRUIT_SIZE * 4, FRUIT_SIZE * 4), pygame.SRCALPHA)
+        pygame.draw.rect(alien_charge_img, (255, 0, 255), alien_charge_img.get_rect()) 
+    if fireball_img is None:
+        fireball_img = pygame.Surface((int(FRUIT_SIZE * 2.5), int(FRUIT_SIZE * 2.5)), pygame.SRCALPHA)
+        pygame.draw.circle(fireball_img, (255, 100, 0), (int(FRUIT_SIZE * 1.25), int(FRUIT_SIZE * 1.25)), int(FRUIT_SIZE * 1.25)) 
+    
+    # Fallback Heart
+    if heart_img is None:
+        heart_img = pygame.Surface((FRUIT_SIZE, FRUIT_SIZE), pygame.SRCALPHA)
+        pygame.draw.circle(heart_img, (255, 0, 100), (FRUIT_SIZE // 2, FRUIT_SIZE // 2), FRUIT_SIZE // 2)
+
+    
+# --- 2. THIẾT LẬP MEDIAPIPE & WEBCAM ---
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(max_num_faces=1, 
+                                     min_detection_confidence=0.5, 
+                                     min_tracking_confidence=0.5)
+cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    print("NO OPEN WEBCAM, PROGRAM WILL USE DEFAULT BASKET POSITION.")
+    cap = None # Đánh dấu webcam không hoạt động
+
+# --- BIẾN GAME & ĐỘ KHÓ BAN ĐẦU ---
+fruits = [] 
+score = 0
+lives = 5
+game_over = False
+
+game_stage = 1
+config = STAGE_CONFIGS[game_stage]
+
+FRUIT_SPEED = config['speed_start']
+FRUIT_SPAWN_DELAY = config['spawn_delay_start']
+SCORE_THRESHOLD = config['threshold'] 
+
+BOMB_CHANCE = config['bomb_chance'] 
+BOMB_PENALTY = config['bomb_penalty'] 
+POWERUP_CHANCE = config['powerup_chance']
+IS_FOGGY = config['is_foggy']
+
+is_slow_motion = False
+slow_motion_end_time = 0
+SLOW_MOTION_DURATION = 8000
+
+SPEED_INCREASE_RATE = 0.5
+SPEED_INCREASE_SCORE_INTERVAL = 10 
+MIN_SPAWN_DELAY = 150 
+
+last_spawn_time = pygame.time.get_ticks()
+last_difficulty_increase_score = 0
+
+# --- THIẾT LẬP CHO MÀN 4 (ALIEN FIRE ZONE) ---
+ALIEN_HORIZONTAL_SPEED = 2.0 
+ALIEN_FIRE_RATE = 5000
+ALIEN_CHARGE_DURATION = 2000
+
+# Vị trí, hướng, và trạng thái của 2 Alien
+ALIEN_POSITIONS = [
+    {'rect': pygame.Rect(SCREEN_WIDTH // 4 - FRUIT_SIZE, 10, FRUIT_SIZE * 2, FRUIT_SIZE * 2), 'dir': 1, 'is_charging': False, 'shoot_time': pygame.time.get_ticks() + ALIEN_FIRE_RATE}, 
+    {'rect': pygame.Rect(SCREEN_WIDTH * 3 // 4 - FRUIT_SIZE, 10, FRUIT_SIZE * 2, FRUIT_SIZE * 2), 'dir': -1, 'is_charging': False, 'shoot_time': pygame.time.get_ticks() + ALIEN_FIRE_RATE + ALIEN_FIRE_RATE // 2} 
+]
+FIREBALL_SPEED = 4.0 
+# --- HỆ THỐNG LƯU ĐIỂM (CHÈN VÀO ĐÂY) ---
+SCORES_FILE = "highscores.txt"
+
+def load_high_scores():
+    """Đọc 5 điểm cao nhất từ file"""
+    if not os.path.exists(SCORES_FILE):
+        return [0, 0, 0, 0, 0]
+    try:
+        with open(SCORES_FILE, "r") as f:
+            scores = [int(line.strip()) for line in f.readlines() if line.strip().isdigit()]
+            scores.sort(reverse=True)
+            while len(scores) < 5: scores.append(0)
+            return scores[:5]
+    except:
+        return [0, 0, 0, 0, 0]
+
+def update_high_scores(new_score):
+    """Cập nhật điểm mới và lưu lại"""
+    scores = load_high_scores()
+    scores.append(new_score)
+    scores.sort(reverse=True)
+    top_5 = scores[:5]
+    with open(SCORES_FILE, "w") as f:
+        for s in top_5:
+            f.write(f"{s}\n")
+    return top_5
+
+# --- HÀM HỖ TRỢ ---
+def draw_text(surface, text, font, color, x, y, shadow_color=COLOR_TEXT_SHADOW, shadow_offset=2, align='midtop'):
+    """
+    Vẽ chữ có đổ bóng (Outline đơn giản) và hỗ trợ căn lề.
+    align: 'midtop' (chính giữa) hoặc 'topleft' (căn trái)
+    """
+    text_surface_shadow = font.render(text, True, shadow_color)
+    text_surface = font.render(text, True, color)
+    
+    if align == 'midtop':
+        text_rect_shadow = text_surface_shadow.get_rect(midtop=(x + shadow_offset, y + shadow_offset))
+        text_rect = text_surface.get_rect(midtop=(x, y))
+    elif align == 'topleft':
+        text_rect_shadow = text_surface_shadow.get_rect(topleft=(x + shadow_offset, y + shadow_offset))
+        text_rect = text_surface.get_rect(topleft=(x, y))
+    else: # Mặc định là midtop
+        text_rect_shadow = text_surface_shadow.get_rect(midtop=(x + shadow_offset, y + shadow_offset))
+        text_rect = text_surface.get_rect(midtop=(x, y))
+
+    surface.blit(text_surface_shadow, text_rect_shadow)
+    surface.blit(text_surface, text_rect)
+
+def calculate_fireball_velocity(start_x, start_y, target_x, target_y, speed):
+    """Tính toán vector vận tốc (vx, vy) để vật thể bay từ điểm start đến target."""
+    dx = target_x - start_x
+    dy = target_y - start_y
+    
+    distance = np.sqrt(dx**2 + dy**2)
+    
+    if distance <= 1: 
+        return 0, speed 
+        
+    vel_x = (dx / distance) * speed
+    vel_y = (dy / distance) * speed
+    
+    return vel_x, vel_y
+
+def show_level_transition(new_stage_name, current_stage_index, current_basket_rect, tips_message):
+    transition_time = pygame.time.get_ticks()
+    duration = 4000 
+    
+    cover_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+    
+    while pygame.time.get_ticks() - transition_time < duration:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                if cap is not None: cap.release()
+                pygame.quit(); sys.exit()
+                
+        elapsed = pygame.time.get_ticks() - transition_time
+        
+        # Logic Fade In/Out
+        if elapsed < duration / 2:
+            alpha = int(255 * (elapsed / (duration / 2)))
+        else:
+            alpha = int(255 * ((duration - elapsed) / (duration / 2)))
+
+        # VẼ KHUNG HÌNH PHÍA SAU
+        screen.blit(BACKGROUND_IMAGES.get(current_stage_index), (0, 0))
+        screen.blit(basket_img, current_basket_rect) 
+
+        # VẼ TẤM MÀN CHE
+        cover_surface.fill(COLOR_TEXT_SHADOW)
+        cover_surface.set_alpha(alpha)
+        screen.blit(cover_surface, (0, 0))
+        
+        # VẼ TEXT LỚN VÀ LƯU Ý
+        if alpha > 150:
+            draw_text(screen, "NEXT LEVEL", font_large, COLOR_PRIMARY, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 120, COLOR_TEXT_SHADOW)
+            draw_text(screen, f"START: {new_stage_name.upper()}", font_medium, COLOR_LEVEL, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 40, COLOR_TEXT_SHADOW)
+            
+            # Xử lý và Hiển thị Tips
+            tips_lines = tips_message.split('|')
+            
+            for i, line in enumerate(tips_lines):
+                draw_text(screen, line, font_small, COLOR_ACCENT, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 40 + i * 35, COLOR_TEXT_SHADOW)
+            
+            # Hiển thị thời gian còn lại
+            time_left = duration - elapsed
+            seconds_left = max(0, int(time_left / 1000))
+            
+            draw_text(screen, f"({seconds_left} seconds remaining...)", font_small, (150, 150, 150), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 150 + (len(tips_lines) * 35), COLOR_TEXT_SHADOW)
+
+        pygame.display.flip()
+        clock.tick(60)
+
+def update_difficulty(basket_rect):
+    global FRUIT_SPEED, FRUIT_SPAWN_DELAY, last_difficulty_increase_score, score, game_stage, SCORE_THRESHOLD, fruits, last_spawn_time, BOMB_CHANCE, BOMB_PENALTY, POWERUP_CHANCE, IS_FOGGY, is_slow_motion, slow_motion_end_time, ALIEN_POSITIONS
+
+    if game_over: return
+    
+    # 1. LOGIC CHUYỂN MÀN CHƠI
+    if score >= SCORE_THRESHOLD and game_stage < len(STAGE_CONFIGS):
+        
+        next_stage_config = STAGE_CONFIGS[game_stage + 1]
+        
+        tips_for_next_stage = next_stage_config.get('tips', 'DISCOVER NEW CHALLENGES')
+        
+        show_level_transition(next_stage_config['name'], game_stage, basket_rect, tips_for_next_stage)
+        
+        # Chuyển sang màn chơi tiếp theo (phần reset logic)
+        game_stage += 1
+        config = STAGE_CONFIGS[game_stage]
+        
+        FRUIT_SPEED = config['speed_start']
+        FRUIT_SPAWN_DELAY = config['spawn_delay_start']
+        SCORE_THRESHOLD = config['threshold']
+        
+        BOMB_CHANCE = config['bomb_chance']
+        BOMB_PENALTY = config['bomb_penalty']
+        POWERUP_CHANCE = config['powerup_chance']
+        IS_FOGGY = config['is_foggy']
+        
+        last_difficulty_increase_score = score
+        fruits = [] 
+        last_spawn_time = pygame.time.get_ticks() 
+        
+        # Reset thời gian bắn Alien cho Màn 4
+        if game_stage == 4:
+            ALIEN_POSITIONS[0]['shoot_time'] = pygame.time.get_ticks() + ALIEN_FIRE_RATE
+            ALIEN_POSITIONS[1]['shoot_time'] = pygame.time.get_ticks() + ALIEN_FIRE_RATE + ALIEN_FIRE_RATE // 2
+            ALIEN_POSITIONS[0]['is_charging'] = False
+            ALIEN_POSITIONS[1]['is_charging'] = False
+
+    # 2. KIỂM TRA TRẠNG THÁI HIỆU ỨNG
+    if is_slow_motion and pygame.time.get_ticks() > slow_motion_end_time:
+        is_slow_motion = False
+        
+    # 3. LOGIC TĂNG ĐỘ KHÓ TRONG MÀN (Chỉ áp dụng cho Màn 1, 2, 3)
+    if not is_slow_motion and game_stage < 4:
+        if score >= last_difficulty_increase_score + SPEED_INCREASE_SCORE_INTERVAL:
+            FRUIT_SPEED += SPEED_INCREASE_RATE
+            if FRUIT_SPAWN_DELAY > MIN_SPAWN_DELAY: FRUIT_SPAWN_DELAY -= 50
+            if FRUIT_SPAWN_DELAY < MIN_SPAWN_DELAY: FRUIT_SPAWN_DELAY = MIN_SPAWN_DELAY
+            last_difficulty_increase_score = (score // SPEED_INCREASE_SCORE_INTERVAL) * SPEED_INCREASE_SCORE_INTERVAL
+        
+def show_game_over_screen(final_score):
+    # Cập nhật điểm ngay khi vừa thua
+    high_scores = update_high_scores(final_score)
+    
+    screen.fill(COLOR_TEXT_SHADOW)
+    
+    # 1. Hiển thị Game Over và Điểm hiện tại
+    draw_text(screen, "GAME OVER", font_large, COLOR_LIFE, SCREEN_WIDTH // 2, 60)
+    draw_text(screen, f"YOUR POINT: {final_score}", font_medium, COLOR_PRIMARY, SCREEN_WIDTH // 2, 140)
+
+    # 2. Hiển thị Bảng xếp hạng (Leaderboard)
+    draw_text(screen, "--- TOP 5 HIGH SCORES ---", font_small, COLOR_ACCENT, SCREEN_WIDTH // 2, 210)
+    
+    for i, s in enumerate(high_scores):
+        # Nếu điểm trong top trùng với điểm vừa chơi thì đổi màu cho nổi bật
+        color = COLOR_PRIMARY if s == final_score and final_score > 0 else COLOR_TEXT_MAIN
+        text = f"TOP {i+1} : {s} PTS"
+        draw_text(screen, text, font_small, color, SCREEN_WIDTH // 2, 260 + i * 40)
+
+    # 3. Hướng dẫn chơi lại
+    draw_text(screen, "PRESS ENTER TO REPLAY", font_medium, COLOR_ACCENT, SCREEN_WIDTH // 2, SCREEN_HEIGHT - 70)
+    
+    pygame.display.flip()
+    
+    waiting = True
+    while waiting:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                if cap is not None: cap.release()
+                pygame.quit(); sys.exit()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+                global score, lives, game_over, FRUIT_SPEED, FRUIT_SPAWN_DELAY, fruits, last_difficulty_increase_score, game_stage, SCORE_THRESHOLD, BOMB_CHANCE, BOMB_PENALTY, POWERUP_CHANCE, IS_FOGGY, is_slow_motion, slow_motion_end_time, last_spawn_time, ALIEN_POSITIONS
+
+                # Reset các thông số về Màn 1
+                stage1_config = STAGE_CONFIGS[1] 
+                score, lives, game_over, fruits = 0, 5, False, [] # Mình để lives là 5 cho đồng bộ nhé
+                game_stage = 1
+                FRUIT_SPEED = stage1_config['speed_start']
+                FRUIT_SPAWN_DELAY = stage1_config['spawn_delay_start']
+                SCORE_THRESHOLD = stage1_config['threshold']
+                BOMB_CHANCE = stage1_config['bomb_chance'] 
+                BOMB_PENALTY = stage1_config['bomb_penalty'] 
+                POWERUP_CHANCE = stage1_config['powerup_chance']
+                IS_FOGGY = stage1_config['is_foggy']
+                last_difficulty_increase_score = 0
+                is_slow_motion = False
+                last_spawn_time = pygame.time.get_ticks() 
+                
+                # Reset Alien
+                now_reset = pygame.time.get_ticks()
+                for alien in ALIEN_POSITIONS:
+                    alien['is_charging'] = False
+                    alien['dir'] = 1 if ALIEN_POSITIONS.index(alien) == 0 else -1
+                    alien['shoot_time'] = now_reset + ALIEN_FIRE_RATE
+                
+                waiting = False
+
+# --- 3. VÒNG LẶP GAME CHÍNH ---
+while True:
+    
+    # --- Xử lý sự kiện Pygame ---
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            if cap is not None: cap.release()
+            pygame.quit(); sys.exit()
+            
+    if game_over:
+        show_game_over_screen(score)
+        continue 
+
+    # --- LẤY TỌA ĐỘ MŨI TỪ WEBCAM ---
+    basket_x = SCREEN_WIDTH // 2 - BASKET_WIDTH // 2 
+    success = False
+    
+    if cap is not None:
+        success, image = cap.read()
+    
+    if success:
+        # Bước 1: Lật ngang ảnh gốc để có "selfie view"
+        flipped_image = cv2.flip(image, 1)
+        
+        # Bước 2: Xoay ảnh 90 độ ngược chiều kim đồng hồ
+        rotated_image = cv2.rotate(flipped_image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        
+        image_rgb = cv2.cvtColor(rotated_image, cv2.COLOR_BGR2RGB)
+        image_rgb.flags.writeable = False
+        results = face_mesh.process(image_rgb)
+        
+        if results.multi_face_landmarks:
+            for face_landmarks in results.multi_face_landmarks:
+                nose_landmark = face_landmarks.landmark[4]
+                
+                h_orig, w_orig, c_orig = flipped_image.shape 
+                
+                # Tọa độ mũi trong khung hình đã xoay (dùng để điều khiển rổ)
+                nose_x_rotated = int((1 - nose_landmark.y) * h_orig) 
+                
+                # Ánh xạ tọa độ mũi ra tọa độ trên màn hình game (trục X)
+                basket_x_center = int(nose_x_rotated * SCREEN_WIDTH / h_orig) 
+                basket_x = basket_x_center - BASKET_WIDTH // 2
+                basket_x = max(0, min(basket_x, SCREEN_WIDTH - BASKET_WIDTH))
+    
+    basket_rect = pygame.Rect(basket_x, basket_y, BASKET_WIDTH, BASKET_HEIGHT)
+    
+    # Lấy vị trí trung tâm của rổ (Dùng cho Alien bắn)
+    basket_center_x = basket_rect.centerx
+    basket_center_y = basket_rect.centery
+    
+    # --- 4. LOGIC TẠO VÀ CẬP NHẬT VẬT THỂ ---
+    update_difficulty(basket_rect)
+
+    # Tính tốc độ rơi thực tế (giảm đi một nửa khi Slow Motion)
+    current_speed = FRUIT_SPEED * (0.5 if is_slow_motion else 1.0)
+
+    now = pygame.time.get_ticks()
+    
+    # ===============================================
+    # LOGIC MÀN 4 (ALIEN FIRE ZONE)
+    # ===============================================
+    if game_stage == 4:
+        
+        # 1. DI CHUYỂN ALIEN VÀ XỬ LÝ TRẠNG THÁI SẠC/BẮN
+        for alien in ALIEN_POSITIONS:
+            
+            # Nếu đang không tụ chiêu, Alien tiếp tục di chuyển
+            if not alien['is_charging']:
+                alien['rect'].x += alien['dir'] * ALIEN_HORIZONTAL_SPEED
+                
+                # Đảo chiều khi chạm biên
+                if alien['rect'].left <= 0 or alien['rect'].right >= SCREEN_WIDTH - alien['rect'].width:
+                    alien['dir'] *= -1
+            
+            # XỬ LÝ BẮN: Kiểm tra nếu đã hết thời gian sạc
+            if alien['is_charging'] and now >= alien['shoot_time']:
+                
+                # --- THỰC HIỆN BẮN ---
+                start_x = alien['rect'].centerx
+                start_y = alien['rect'].bottom
+                
+                # Tính toán vector vận tốc chéo
+                vel_x, vel_y = calculate_fireball_velocity(start_x, start_y, 
+                                                           basket_center_x, basket_center_y, 
+                                                           FIREBALL_SPEED)
+                
+                fireball_rect = pygame.Rect(start_x - FRUIT_SIZE // 2, start_y, FRUIT_SIZE, FRUIT_SIZE)
+                
+                fruits.append({'rect': fireball_rect, 
+                                'speed': vel_y, 
+                                'img': fireball_img,
+                                'type': 'fireball',
+                                'vel_x': vel_x}) 
+                
+                # Reset trạng thái sạc và đặt thời gian bắn tiếp theo
+                alien['is_charging'] = False
+                alien['shoot_time'] = now + ALIEN_FIRE_RATE
+        
+        # 2. KÍCH HOẠT SẠC NẾU ĐÃ ĐẾN LÚC
+        for alien in ALIEN_POSITIONS:
+            # Nếu sắp đến thời gian bắn (trong vòng 0.2s), kích hoạt trạng thái sạc
+            if not alien['is_charging'] and now + ALIEN_CHARGE_DURATION >= alien['shoot_time']:
+                alien['is_charging'] = True
+                # Alien dừng lại khi sạc
+        
+        # 3. Spawn trái cây liên tục
+        if now - last_spawn_time > FRUIT_SPAWN_DELAY: 
+            new_fruit_x = random.randint(0, SCREEN_WIDTH - FRUIT_SIZE)
+            item_img = random.choice(fruit_images)
+            fruits.append({'rect': pygame.Rect(new_fruit_x, 0, FRUIT_SIZE, FRUIT_SIZE), 
+                            'speed': current_speed,
+                            'img': item_img,
+                            'type': 'fruit'}) 
+            last_spawn_time = now
+        
+    # LOGIC SPAWN TRÁI CÂY/BOM/POWERUP (MÀN 1, 2, 3)
+    elif now - last_spawn_time > FRUIT_SPAWN_DELAY: 
+        new_fruit_x = random.randint(0, SCREEN_WIDTH - FRUIT_SIZE)
+        
+        spawn_type = 'fruit'
+        item_img = random.choice(fruit_images) 
+        current_item_speed = current_speed 
+
+        random_num = random.random()
+
+        if random_num < BOMB_CHANCE: 
+            spawn_type = 'bomb'
+            item_img = bomb_img
+        elif random_num < BOMB_CHANCE + POWERUP_CHANCE:
+            spawn_type = 'powerup' 
+            item_img = powerup_img
+
+        fruits.append({'rect': pygame.Rect(new_fruit_x, 0, FRUIT_SIZE, FRUIT_SIZE), 
+                        'speed': current_item_speed,
+                        'img': item_img,
+                        'type': spawn_type}) 
+        last_spawn_time = now
+
+    new_fruits = []
+    
+    for fruit_data in fruits:
+        fruit = fruit_data['rect']
+        
+        # Cập nhật vị trí
+        if fruit_data['type'] == 'fireball':
+            # Quả lửa bay chéo (sử dụng vận tốc X và Y riêng biệt)
+            fruit.x += fruit_data.get('vel_x', 0) 
+            fruit.y += fruit_data['speed']
+        else:
+            # Trái cây/Bom/Powerup rơi thẳng
+            fruit.y += current_speed 
+        
+        # Xử lý va chạm
+        if basket_rect.colliderect(fruit): 
+            if fruit_data['type'] == 'fruit':
+                score += 1 
+            elif fruit_data['type'] == 'bomb':
+                score -= BOMB_PENALTY
+                lives -= 1 
+                if score < 0: score = 0
+                if lives <= 0: game_over = True
+            elif fruit_data['type'] == 'powerup':
+                is_slow_motion = True 
+                slow_motion_end_time = pygame.time.get_ticks() + SLOW_MOTION_DURATION
+            elif fruit_data['type'] == 'fireball': 
+                score -= 1 
+                if score < 0: score = 0
+                
+        # Loại bỏ vật thể nếu chạm hoặc rơi ra ngoài màn hình
+        if basket_rect.colliderect(fruit) or fruit.bottom >= SCREEN_HEIGHT: 
+            if fruit_data['type'] == 'fruit' and not basket_rect.colliderect(fruit):
+                lives -= 1
+                if lives <= 0: game_over = True
+            pass 
+        else: 
+            new_fruits.append(fruit_data)
+
+    fruits = new_fruits 
+    
+    # --- 5. VẼ CÁC VẬT THỂ VÀ HIỂN THỊ ---
+    
+    # 1. VẼ BACKGROUND
+    current_background_img = BACKGROUND_IMAGES.get(game_stage)
+    screen.blit(current_background_img, (0, 0))
+    
+    # 2. VẼ ĐIỂM SỐ, MẠNG SỐNG & MÀN CHƠI (GÓC TRÊN BÊN TRÁI)
+    
+    # 2a. Level: Góc trên bên trái
+    draw_text(screen, 
+              f"LEVEL {game_stage}: {STAGE_CONFIGS[game_stage]['name']}", 
+              font_medium, 
+              COLOR_LEVEL, 
+              LEVEL_TEXT_X, 
+              LEVEL_TEXT_Y, 
+              COLOR_TEXT_SHADOW, 
+              align='topleft')
+    
+    # 2b. Point: Dưới Level (căn trái)
+    draw_text(screen, 
+              f"POINT: {score}", 
+              font_medium, 
+              COLOR_PRIMARY, 
+              POINT_TEXT_X, 
+              POINT_TEXT_Y, 
+              COLOR_TEXT_SHADOW, 
+              align='topleft')
+    
+    # 2c. Life: Dưới Point (căn trái)
+    draw_text(screen, 
+              f"LIFE: {lives}", 
+              font_medium, 
+              COLOR_LIFE, 
+              LIFE_TEXT_X, 
+              LIFE_TEXT_Y, 
+              COLOR_TEXT_SHADOW, 
+              align='topleft')
+    
+    # 3. VẼ WEBCAM (GÓC TRÊN BÊN PHẢI)
+    if success:
+        # Sử dụng rotated_image đã xoay ở trên
+        frame_surface = pygame.surfarray.make_surface(image_rgb) 
+        
+        # Scale để phù hợp với kích thước hiển thị mong muốn
+        frame_surface = pygame.transform.scale(frame_surface, (WEBCAM_DISPLAY_W, WEBCAM_DISPLAY_H))
+        
+        webcam_surface = pygame.Surface((WEBCAM_DISPLAY_W, WEBCAM_DISPLAY_H), pygame.SRCALPHA)
+        webcam_surface.blit(frame_surface, (0, 0))
+        
+        try:
+            # Bo góc cho video (Pygame > 2.0)
+            temp_mask = pygame.Surface(webcam_surface.get_size(), pygame.SRCALPHA)
+            pygame.draw.rect(temp_mask, (255, 255, 255), temp_mask.get_rect(), border_radius=WEBCAM_BORDER_RADIUS)
+            webcam_surface.blit(temp_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+        except:
+            pass 
+
+        screen.blit(webcam_surface, WEBCAM_POS)
+        
+        # VẼ VIỀN RÕ RÀNG CHO WEBCAM
+        webcam_rect = pygame.Rect(WEBCAM_POS[0], WEBCAM_POS[1], WEBCAM_DISPLAY_W, WEBCAM_DISPLAY_H)
+        pygame.draw.rect(screen, COLOR_ACCENT, webcam_rect, WEBCAM_BORDER_THICKNESS, border_radius=WEBCAM_BORDER_RADIUS)
+    
+    # 4. VẼ GAME OBJECTS
+    
+    # VẼ ALIEN NẾU Ở MÀN 4
+    if game_stage == 4:
+        for alien in ALIEN_POSITIONS:
+            if alien['is_charging']:
+                # Vẽ hình ảnh tụ chiêu
+                screen.blit(alien_charge_img, alien['rect']) 
+            else:
+                # Vẽ hình ảnh di chuyển bình thường
+                screen.blit(alien_img, alien['rect'])
+                
+    for fruit_data in fruits:
+        screen.blit(fruit_data['img'], fruit_data['rect'])
+
+    screen.blit(basket_img, basket_rect)
+    
+    # 5. VẼ HIỆU ỨNG SƯƠNG MÙ (Màn 3)
+    if IS_FOGGY:
+        fog_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        fog_surface.fill((50, 50, 50, 240)) 
+        
+        visible_radius = 120 
+        mask = pygame.Surface((2 * visible_radius, 2 * visible_radius), pygame.SRCALPHA)
+        mask.fill((0, 0, 0, 0))
+        pygame.draw.circle(mask, (255, 255, 255, 255), (visible_radius, visible_radius), visible_radius)
+        
+        fog_surface.blit(mask, (basket_rect.centerx - visible_radius, basket_rect.centery - visible_radius), special_flags=pygame.BLEND_RGBA_SUB)
+
+        screen.blit(fog_surface, (0, 0))
+    
+    # 6. Hiển thị trạng thái Slow Motion
+    if is_slow_motion:
+        flash_color = COLOR_ACCENT if (pygame.time.get_ticks() // 250) % 2 == 0 else COLOR_TEXT_MAIN
+        # Đặt Slow Motion ở dưới cùng, chính giữa
+        draw_text(screen, "SLOW MOTION ACTIVE", font_medium, flash_color, SCREEN_WIDTH // 2, SCREEN_HEIGHT - 40, COLOR_TEXT_SHADOW, 3)
+
+    pygame.display.flip() 
+    clock.tick(60) 
+
+# --- 6. DỌN DẸP ---
+if cap is not None:
+    cap.release()
+cv2.destroyAllWindows()
+pygame.quit()
+
